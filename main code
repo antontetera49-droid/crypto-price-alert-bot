@@ -1,0 +1,294 @@
+
+========================================================================================================================================
+#If you need to: customize/upgrade/integrate or just dont wanna to set it by yourself, then just text me.
+#Telegram for work: @Myhamed91
+========================================================================================================================================
+
+import asyncio
+import os
+import sqlite3
+import httpx
+from loguru import logger
+from telegram import Bot
+
+# ================= CONFIG =================
+# You can set these via environment variables or paste them directly here
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_TELEGRAM_CHAT_ID")
+
+CHECK_INTERVAL = 60  # Polling interval in seconds
+
+# Watchlist configuration with price alert thresholds (in USD)
+WATCHLIST = {
+    "bitcoin": {"symbol": "BTC", "alert_above": 70000, "alert_below": 60000},
+    "ethereum": {"symbol": "ETH", "alert_above": 3500, "alert_below": 2500},
+    "solana": {"symbol": "SOL", "alert_above": 200, "alert_below": 120},
+}
+# ==========================================
+
+
+class Storage:
+    """Lightweight SQLite storage to prevent spamming duplicate alerts"""
+
+    def init(self, db_path="alerts.db"):
+        self.db_path = db_path
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sent_alerts (
+                    key TEXT PRIMARY KEY,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """
+            )
+
+    def is_sent(self, key: str) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM sent_alerts WHERE key = ?", (key,))
+            return cur.fetchone() is not None
+
+    def mark_sent(self, key: str):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO sent_alerts (key) VALUES (?)", (key,)
+            )
+
+
+async def get_crypto_prices(coin_ids: list[str]) -> dict:
+    """Fetches live prices from CoinGecko's free public API"""
+    ids = ",".join(coin_ids)
+    url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to fetch data from CoinGecko: {e}")
+            return {}
+
+
+async def send_telegram_alert(bot: Bot, text: str):
+    try:
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=text,
+            parse_mode="HTML",
+        )
+        logger.info("Telegram notification sent successfully!")
+    except Exception as e:
+        logger.error(f"Failed to send Telegram message: {e}")
+
+
+async def main():
+    logger.info("🚀 Starting Crypto Alert Parser...")
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    storage = Storage()
+
+    while True:
+        logger.info("Fetching fresh price data...")
+        prices = await get_crypto_prices(list(WATCHLIST.keys()))
+
+        for coin_id, config in WATCHLIST.items():
+            if coin_id not in prices:
+                continue
+
+            data = prices[coin_id]
+            price = data.get("usd", 0)
+            change_24h = data.get("usd_24h_change", 0)
+            symbol = config["symbol"]
+
+            logger.info(
+                f"[{symbol}] Current Price: ${price:,.2f} | 24h Change: {change_24h:+.2f}%"
+            )
+
+            # Check HIGH threshold
+            if price >= config["alert_above"]:
+                alert_key = f"{coin_id}_above_{config['alert_above']}"
+                if not storage.is_sent(alert_key):
+                    msg = (
+                        f"🚀 <b>{symbol} High Target Reached!</b>\n\n"
+                        f"💵 <b>Current Price:</b> ${price:,.2f}\n"
+                        f"📊 <b>24h Change:</b> {change_24h:+.2f}%\n"
+                        f"🎯 <b>Target Level:</b> ${config['alert_above']:,.2f}"
+                    )
+                    await send_telegram_alert(bot, msg)
+                    storage.mark_sent(alert_key)
+                    """
+===============================================================================
+                       CRYPTO ALERT PARSER & TRACKER
+===============================================================================
+
+[SETUP & RUN INSTRUCTIONS]
+
+1. Quick Run with Python:
+   pip install httpx python-telegram-bot loguru
+   python main.py
+
+2. Configuration via Environment Variables (Optional):
+   export TELEGRAM_BOT_TOKEN="your_bot_token_here"
+   export TELEGRAM_CHAT_ID="your_chat_id_here"
+
+3. Dockerfile (if using Docker):
+   --------------------------------------------------------
+   FROM python:3.11-slim
+   WORKDIR /app
+   ENV PYTHONUNBUFFERED=1
+   RUN pip install --no-cache-dir httpx python-telegram-bot loguru
+   COPY main.py .
+   CMD ["python", "main.py"]
+   --------------------------------------------------------
+
+4. docker-compose.yml (if using Docker):
+   --------------------------------------------------------
+   version: '3.8'
+   services:
+     crypto-parser:
+       build: .
+       container_name: crypto_alert_parser
+       restart: always
+       environment:
+         - TELEGRAM_BOT_TOKEN=your_bot_token_here
+         - TELEGRAM_CHAT_ID=your_chat_id_here
+       volumes:
+         - ./:/app
+   --------------------------------------------------------
+===============================================================================
+"""
+
+import asyncio
+import os
+import sqlite3
+import httpx
+from loguru import logger
+from telegram import Bot
+
+# ================= CONFIGURATION =================
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_TELEGRAM_CHAT_ID")
+
+CHECK_INTERVAL = 60  # Check interval in seconds
+
+# Watchlist configuration with price alert thresholds (in USD)
+WATCHLIST = {
+    "bitcoin": {"symbol": "BTC", "alert_above": 70000, "alert_below": 60000},
+    "ethereum": {"symbol": "ETH", "alert_above": 3500, "alert_below": 2500},
+    "solana": {"symbol": "SOL", "alert_above": 200, "alert_below": 120},
+}
+# =================================================
+
+
+class Storage:
+    """Lightweight SQLite storage to prevent spamming duplicate alerts"""
+
+    def init(self, db_path="alerts.db"):
+        self.db_path = db_path
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sent_alerts (
+                    key TEXT PRIMARY KEY,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """
+            )
+
+    def is_sent(self, key: str) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM sent_alerts WHERE key = ?", (key,))
+            return cur.fetchone() is not None
+
+    def mark_sent(self, key: str):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO sent_alerts (key) VALUES (?)", (key,)
+            )
+
+
+async def get_crypto_prices(coin_ids: list[str]) -> dict:
+    """Fetches live prices from CoinGecko's free public API"""
+    ids = ",".join(coin_ids)
+    url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to fetch data from CoinGecko: {e}")
+            return {}
+
+
+async def send_telegram_alert(bot: Bot, text: str):
+    try:
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=text,
+            parse_mode="HTML",
+        )
+        logger.info("Telegram notification sent successfully!")
+    except Exception as e:
+        logger.error(f"Failed to send Telegram message: {e}")
+
+
+async def main():
+    logger.info("🚀 Starting Crypto Alert Parser...")
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    storage = Storage()
+    while True:
+        logger.info("Fetching fresh price data...")
+        prices = await get_crypto_prices(list(WATCHLIST.keys()))
+
+        for coin_id, config in WATCHLIST.items():
+            if coin_id not in prices:
+                continue
+
+            data = prices[coin_id]
+            price = data.get("usd", 0)
+            change_24h = data.get("usd_24h_change", 0)
+            symbol = config["symbol"]
+
+            logger.info(
+                f"[{symbol}] Current Price: ${price:,.2f} | 24h Change: {change_24h:+.2f}%"
+            )
+
+            # Check HIGH threshold
+            if price >= config["alert_above"]:
+                alert_key = f"{coin_id}_above_{config['alert_above']}"
+                if not storage.is_sent(alert_key):
+                    msg = (
+                        f"🚀 <b>{symbol} High Target Reached!</b>\n\n"
+                        f"💵 <b>Current Price:</b> ${price:,.2f}\n"
+                        f"📊 <b>24h Change:</b> {change_24h:+.2f}%\n"
+                        f"🎯 <b>Target Level:</b> ${config['alert_above']:,.2f}"
+                    )
+                    await send_telegram_alert(bot, msg)
+                    storage.mark_sent(alert_key)
+
+            # Check LOW threshold
+            elif price <= config["alert_below"]:
+                alert_key = f"{coin_id}_below_{config['alert_below']}"
+                if not storage.is_sent(alert_key):
+                    msg = (
+                        f"🔻 <b>{symbol} Low Target Reached!</b>\n\n"
+                        f"💵 <b>Current Price:</b> ${price:,.2f}\n"
+                        f"📊 <b>24h Change:</b> {change_24h:+.2f}%\n"
+                        f"🎯 <b>Target Level:</b> ${config['alert_below']:,.2f}"
+                    )
+                    await send_telegram_alert(bot, msg)
+                    storage.mark_sent(alert_key)
+
+        await asyncio.sleep(CHECK_INTERVAL)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+    ========================================================================================================================================
+#If you need to: customize/upgrade/integrate or just dont wanna to set it by yourself, then just text me.
+#Telegram for work: @Myhamed91
+========================================================================================================================================
